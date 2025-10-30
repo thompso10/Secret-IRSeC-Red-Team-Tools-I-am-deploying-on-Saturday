@@ -54,7 +54,7 @@ else
     echo "passwd: password unchanged"
     exit 1
 fi
-
+git 
 
 # Replace the hash in /etc/shadow
 
