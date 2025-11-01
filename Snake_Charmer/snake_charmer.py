@@ -18,6 +18,7 @@ from typing import Tuple, Dict
 import shutil
 import shlex
 import os
+import textwrap
 
 
 WORKERS=30 #how many threads run at once
@@ -131,6 +132,54 @@ def all_attack(username,password,command,os):
     for key in HOSTNAME_DICT:
         box_attack(key,username,password,command,os)
 
+
+left = r"""
+           /^\/^\
+         _|__|  O|
+\/     /~     \_/ \
+ \____|__________/  \
+        \_______      \
+                `\     \                 \
+                  |     |                  \
+                 /      /                    \
+                /     /                       \\
+              /      /                         \ \
+             /     /                            \  \
+           /     /             _----_            \   \
+          /     /           _-~      ~-_         |   |
+         (      (        _-~    _--_    ~-_     _/   |
+          \      ~-____-~    _-~    ~-_    ~-_-~    /
+            ~-_           _-~          ~-_       _-~
+               ~--______-~                ~-___-~
+"""
+
+right = r"""
+   ____              _           ____ _                                    
+  / ___| _ __   __ _| | _____   / ___| |__   __ _ _ __ _ __ ___   ___ _ __ 
+  \___ \| '_ \ / _` | |/ / _ \ | |   | '_ \ / _` | '__| '_ ` _ \ / _ \ '__|
+   ___) | | | | (_| |   <  __/ | |___| | | | (_| | |  | | | | | |  __/ |   
+  |____/|_| |_|\__,_|_|\_\___|  \____|_| |_|\__,_|_|  |_| |_| |_|\___|_|   
+                                                                           
+"""
+
+def print_side_by_side(a: str, b: str, gap: int = 4):
+    # remove incidental indentation, keep backslashes literal using raw strings above
+    a = textwrap.dedent(a).rstrip("\n")
+    b = textwrap.dedent(b).rstrip("\n")
+    a_lines = a.splitlines()
+    b_lines = b.splitlines()
+    max_a = max(len(line) for line in a_lines) if a_lines else 0
+    # pad the shorter list so zip_longest isn't needed
+    max_lines = max(len(a_lines), len(b_lines))
+    a_lines += [""] * (max_lines - len(a_lines))
+    b_lines += [""] * (max_lines - len(b_lines))
+
+    for left_line, right_line in zip(a_lines, b_lines):
+        print(left_line.ljust(max_a + gap) + right_line)
+
+# print them
+
+
 def expand_wildcards(ip_template,username,password,command,os): #pos 2: wildcard_dict,
 
     parts = ip_template.split('.')
@@ -163,7 +212,9 @@ def expand_wildcards(ip_template,username,password,command,os): #pos 2: wildcard
   
 #CLI
 def cli_interface():
-    print("\n ~~ SNAKE CHARMER ~~\n")
+
+    print_side_by_side(left, right, gap=6)
+
     username=input("Target user: ")
     password=input("Target Password (leave blank for default): ")
     if password=="":
@@ -176,7 +227,7 @@ def cli_interface():
         print("invalid answer!")
         quit()
 
-    targets_input = input("Enter either a: \n-Single IP address (192.168.1.1)\n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl, etc')\n-All ('All')\nInput: ").upper()
+    targets_input = input("Enter either a: \n-Single IP address (192.168.1.1)\n-A IP Address range (192.168.2,1-18, 10.1-4.3.10-18)\n-A single team name ('team01','team2', ... ,'team18'), \n-Single box type ('Big Bang, Dino Asteroid, Viking Raids, Enlightenment, Chernobyl, etc')\n-All ('All')\nInput: ").upper()
     box_targets=['BIG BANG','DINO ASTEROID','VIKING RAIDS','ENLIGHTENMENT','CHERNOBYL']
 
     if "TEAM" in targets_input:
